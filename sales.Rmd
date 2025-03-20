@@ -1,0 +1,507 @@
+---
+title: "Statistical Analysis of Sales"
+author: "Swintabel Agyei - 27408490"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+library(nortest)
+library(ggplot2)
+library(dplyr)
+library(odbc)
+library(DBI)
+library(cluster)
+library(mgcv)
+library(lubridate)
+library(scales) 
+```
+
+
+
+
+# Project Summary
+
+This project analyzes customer purchasing behavior by segmenting products into two cost groups using clustering techniques. Additionally, RFM(Recency, Frequency, Monetary) analysis is conducted to classify customers based on purchasing activity and value. The study identifies high- and low-value customer segments, frequent purchase patterns, and product associations using association rule mining (Apriori Algorithm). Insights from these Analysis enable data-driven decision-making, such as personalized marketing strategies, product bundling, and inventory optimization. The findings are visualized through an interactive Shiny dashboard, providing actionable intelligence for business growth.
+
+
+
+## LOAD DATA FROM SQL SERVER
+
+```{r}
+con <- dbConnect(odbc::odbc(),
+                 Driver = "ODBC Driver 17 for SQL Server",
+                 Server = "localhost",
+                 Database = "porfolio",
+                 Trusted_Connection = "Yes")
+
+df <- dbGetQuery(con, "SELECT * FROM SalesB")
+
+dbDisconnect(con)
+
+df_copy<-df
+```
+
+## EXPLORE DATA
+
+**DATA SUMMARY:**
+The dataset consists of 522,316 transactions, including `InvoiceNo`, `StockCode`, `Description`, `Quantity`, `InvoiceDate`, `UnitPrice`, `CustomerID`, and `Country`. Transactions span from December 2010 to December 2011. The Quantity ranges from 1 to 500, while `UnitPrice` varies from 0.001 to 649.5. There are 131,420 missing CustomerIDs, indicating anonymous purchases. The dataset captures global transactions across multiple countries.
+
+```{r}
+head(df)
+```
+
+```{r}
+summary(df)
+```
+
+
+## ANALYZING NUMERIC VARIABLE (QUANTITY AND PRICE)
+
+This step examines the distribution and relationship between Quantity and UnitPrice. The Anderson-Darling normality test results (p-value < 2.2e-16) confirm that both variables deviate significantly from a normal distribution. Boxplots highlight the presence of outliers, particularly for high UnitPrice values. A Spearman correlation of -0.41 suggests a moderate negative, non-linear relationship. Scatter plots reveal that as price increases, quantity purchased drops sharply at first, then levels off, indicating that customers are highly sensitive to price changes at lower values but less reactive at higher prices. A smoothed trend line further confirms this diminishing impact of price on quantity.
+
+**1. Normality Test**
+```{r}
+# Anderson-Darling test for Quantity
+ad.test(df$Quantity)
+
+# Anderson-Darling test for Quantity
+ad.test(df$UnitPrice)
+
+```
+
+**2. Identifying Outliers with Boxplots:** 
+```{r}
+boxplot(df$UnitPrice, main = "Boxplot of UnitPrice", col = "lightblue")
+
+boxplot(df$Quantity, main = "Boxplot of Quantity", col = "lightblue")
+```
+
+**3. Checking Correlation Between Quantity and Unit Price:**
+
+```{r}
+cor(df$Quantity, df$UnitPrice, method = "spearman", use = "complete.obs") # non-linear
+```
+
+
+```{r eval=FALSE, include=FALSE}
+ggplot(df, aes(x =UnitPrice , y = Quantity)) +
+  geom_point(alpha = 0.5) +
+  coord_cartesian(xlim = c(0, 150), ylim = c(0, 200))+
+  theme_minimal() +
+  labs(title = "Quantity vs Price", x ="UnitPrice" , y = "Quantity")
+```
+
+
+```{r message=FALSE, warning=FALSE}
+ggplot(df, aes(x = UnitPrice, y = Quantity)) +
+  geom_point() +
+  coord_cartesian(xlim = c(0, 30), ylim = c(0, 100)) +  # zoom into a specific range
+  geom_smooth()+
+  theme_minimal() +
+  labs(title = "Zoomed-In Scatter Plot", x ="UnitPrice" , y = "Quantity")
+```
+
+
+## Purchasing Trends Across Cost Groups
+
+The analysis explored purchasing trends by clustering products into Low Cost and High Cost groups using K-means clustering. After normalizing prices, products were classified based on their average price. A Kruskal-Wallis test confirmed significant differences in purchase quantities across clusters. A box plot (log scale) visualized these variations, while regression analysis showed a stronger negative price-quantity relationship in the Low Cost group. The top 10 best-selling products per cluster were identified and plotted, highlighting distinct purchasing behaviors. This analysis provides insights into how price influences demand and helps businesses optimize pricing strategies.
+
+```{r}
+# Select relevant columns
+df_cluster <- df %>%
+  select(StockCode, UnitPrice) %>%
+  group_by(StockCode) %>%
+  summarise(AvgPrice = mean(UnitPrice), .groups = "drop")
+
+# Normalize Unit Price (to ensure fair clustering)
+df_cluster$ScaledPrice <- scale(df_cluster$AvgPrice)
+
+
+set.seed(123)  # Ensure reproducibility
+kmeans_result <- kmeans(df_cluster$ScaledPrice, centers = 2, nstart = 25)
+
+# Assign clusters
+df_cluster$Cluster <- factor(kmeans_result$cluster, labels = c("Low Cost", "High Cost"))
+```
+
+Visualization of Clusters:
+
+Plotted product clusters based on average price using a scatter plot, distinguishing Low Cost and High Cost products.
+
+```{r}
+ggplot(df_cluster, aes(x = AvgPrice, y = Cluster, color = Cluster)) +
+  geom_point(alpha = 0.7) +
+  theme_minimal() +
+  labs(title = "Product Clustering by Price", x = "Average Price", y = "Cluster") 
+```
+
+
+```{r include=FALSE}
+# Merge cluster info back into main dataset
+df <- df %>% left_join(df_cluster, by = "StockCode")
+```
+
+
+
+Quantity Comparison by Cluster:
+
+Used a box plot (log scale) to compare the quantity sold in each cluster, revealing distribution differences.
+
+```{r}
+ggplot(df, aes(x = Cluster, y = Quantity)) +
+  geom_boxplot() +
+  scale_y_log10() +  # Log scale to compress extreme values
+  theme_minimal() +
+  labs(title = "Box Plot of Quantity by Cluster (Log Scale)", 
+       x = "Cluster", y = "Quantity (Log Scale)")
+```
+
+Statistical Testing:
+
+- Performed a Kruskal-Wallis test (p < 2.2e-16), confirming a significant difference in quantity sold between clusters.
+- Built linear models per cluster, showing a stronger negative price-quantity relationship in the Low Cost group.
+
+```{r}
+# Kruskal-Wallis test for comparing Quantity across Clusters
+kruskal_test <- kruskal.test(Quantity ~ Cluster, data = df)
+
+
+# Print the result directly
+print(kruskal_test)
+```
+
+```{r}
+df %>%
+  group_by(Cluster) %>%
+  do(model = lm(Quantity ~ UnitPrice, data = .)) %>%
+  summarise(Cluster, Intercept = coef(model)[1], Slope = coef(model)[2])
+```
+
+
+```{r include=FALSE}
+top_products <- df %>%
+  group_by(Cluster, StockCode, Description) %>%
+  summarise(TotalQuantity = sum(Quantity, na.rm = TRUE), .groups = "drop") %>%
+  arrange(Cluster, desc(TotalQuantity))
+
+top_10_per_cluster <- top_products %>%
+  group_by(Cluster) %>%
+  slice_max(TotalQuantity, n = 10) %>%
+  ungroup()
+```
+
+
+Top-Selling Products per Cluster:
+
+- Identified the top 10 best-selling products in each cost group.
+- High cost products are seen to be bulky products like furniture while low cost products are everyday essentials. This is usually the case for most shopping centres.
+
+```{r echo=FALSE}
+ggplot(top_10_per_cluster, aes(x = TotalQuantity, y = reorder(Description, TotalQuantity), fill = Cluster)) +
+  geom_col() +  # Use stat="identity" to plot actual values
+  facet_wrap(~ Cluster, scales = "free") +  # Separate clusters into panels
+  labs(title = "Top 10 Products in Each Cluster",
+       x = "Total Quantity Sold",
+       y = "Product") +
+  theme_minimal() +
+  coord_flip() +  # Flips axes for better readability
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size=8), axis.text.y = element_text(size = 6))  # Rotate labels
+```
+
+
+## Customer Purchase Behaviour Analysis
+
+The analysis segmented customers using RFM (Recency, Frequency, Monetary) analysis and classified them into High Value and Low Value groups based on Customer Lifetime Value (CLV). The top 10 countries for each segment were identified and visualized. The most frequently purchased products by high and low-value customers were analyzed. A time-series analysis of purchase trends showed variations in spending patterns over time. These insights help businesses target high-value customers effectively and optimize product offerings and marketing strategies.
+
+1. RFM Analysis (Recency, Frequency, Monetary Value)
+
+```{r}
+# Create a snapshot date (latest date in the dataset for recency calculation)
+snapshot_date <- max(df$InvoiceDate)
+
+# Calculate Recency, Frequency, and Monetary
+rfm_data <- df %>%
+  group_by(CustomerID) %>%
+  summarise(
+    Recency = as.numeric(difftime(snapshot_date, max(InvoiceDate), units = "days")),  # Days since last purchase
+    Frequency = n_distinct(InvoiceNo),  # Number of purchases
+    Monetary = sum(Quantity * UnitPrice)  # Total spending
+  )
+
+# Scale the RFM values
+rfm_data <- rfm_data %>%
+  mutate(
+    Recency_Scaled = scale(Recency),
+    Frequency_Scaled = scale(Frequency),
+    Monetary_Scaled = scale(Monetary)
+  )
+
+# View the result
+#head(rfm_data)
+```
+
+Segment Customers:
+
+- High Value: CLV above the median.
+- Low Value: CLV below the median.
+
+```{r}
+# Calculate Average Order Value (AOV)
+avg_order_value <- mean(rfm_data$Monetary)
+
+# Calculate CLV by customer segment
+rfm_data <- rfm_data %>%
+  mutate(
+    CLV = Monetary * Frequency  # A simple estimate of CLV (you can refine this model)
+  )
+
+# Classify customers as High or Low Value based on CLV
+rfm_data <- rfm_data %>%
+  mutate(
+    CLV_Segment = ifelse(CLV > median(CLV), "High Value", "Low Value")
+  )
+
+# View the result
+head(rfm_data)
+```
+
+2. Identify Dominant Countries
+- Group customers by country and CLV segment.
+- Rank countries by customer count within each segment.
+- Select the top 10 countries for high-value and low-value customers.
+- Visualize the results using bar charts.
+
+```{r include=FALSE}
+# Merge the RFM data with the main dataset on 'CustomerID'
+merged_data <- merge(rfm_data, df, by = "CustomerID")
+
+# 1. Dominant Countries
+dominant_countries <- merged_data %>%
+  group_by(CLV_Segment, Country) %>%
+  summarise(CustomerCount = n()) %>%
+  arrange(desc(CustomerCount))
+# View dominant countries
+head(dominant_countries)
+```
+
+
+```{r echo=FALSE}
+# Filter for high-value customers
+high_value_countries <- dominant_countries %>%
+  filter(CLV_Segment == "High Value") %>%
+  arrange(desc(CustomerCount))
+
+# Select top 10 dominant countries for high-value customers
+top_10_high_value_countries <- head(high_value_countries, 10)
+
+# Plot the top 10 dominant countries for high-value customers
+ggplot(top_10_high_value_countries, aes(x = reorder(Country, CustomerCount), y = CustomerCount)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  coord_flip() +  # Flip the coordinates for better readability +
+  geom_text(aes(label = scales::comma(CustomerCount)), vjust = -0.3, color = "black")+
+  labs(title = "Top 10 Dominant Countries for High-Value Customers",
+       x = "Country",
+       y = "Number of High-Value Customers") +
+  theme_minimal()
+```
+
+```{r echo=FALSE}
+# Filter for Low-value customers
+low_value_countries <- dominant_countries %>%
+  filter(CLV_Segment == "Low Value") %>%
+  arrange(desc(CustomerCount))
+
+# Select top 10 dominant countries for high-value customers
+top_10_low_value_countries <- head(low_value_countries, 10)
+
+# Plot the top 10 dominant countries for low-value customers
+ggplot(top_10_low_value_countries, aes(x = reorder(Country, CustomerCount), y = CustomerCount)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  coord_flip() +  # Flip the coordinates for better readability +
+  geom_text(aes(label = scales::comma(CustomerCount)), vjust = -0.3, color = "black")+
+  labs(title = "Top 10 Dominant Countries for Low-Value Customers",
+       x = "Country",
+       y = "Number of Low-Value Customers") +
+  theme_minimal()
+```
+
+3. Identify Favorite Products
+
+- Group products by CLV segment.
+- Sum total quantity purchased per product.
+- Rank the products based on total quantity.
+- Select and visualize the top 10 products for both high-value and low-value customers.
+
+```{r include=FALSE}
+# 2. Favorite Products (most frequently purchased by high and low-value customers)
+favorite_products <- merged_data %>%
+  filter(CLV_Segment == "High Value" | CLV_Segment == "Low Value") %>%
+  group_by(CLV_Segment, Description) %>%
+  summarise(TotalQuantity = sum(Quantity)) %>%
+  arrange(desc(TotalQuantity))
+# View the favorite products
+#head(favorite_products)
+```
+
+
+```{r echo=FALSE}
+# Filter for High-value customers
+high_value_products <- favorite_products %>%
+  filter(CLV_Segment == "High Value") %>%
+  arrange(desc(TotalQuantity))
+
+# Select top 10 dominant countries for high-value customers
+top_10_high_value_products <- head(high_value_products, 10)
+
+# Plot the top 10 Products for High-value customers
+ggplot(top_10_high_value_products, aes(x = reorder(Description, TotalQuantity), y = TotalQuantity)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  coord_flip() +  # Flip the coordinates for better readability +
+  geom_text(aes(label = scales::comma(TotalQuantity)), vjust = -0.3, color = "black")+
+  labs(title = "Top 10 Products for High-Value Customers",
+       x = "Country",
+       y = "Number of High-Value Customers") +
+  theme_minimal()
+```
+
+
+```{r echo=FALSE}
+# Filter for low-value customers
+low_value_products <- favorite_products %>%
+  filter(CLV_Segment == "Low Value") %>%
+  arrange(desc(TotalQuantity))
+
+# Select top 10 products for low-value customers
+top_10_low_value_products <- head(low_value_products, 10)
+
+# Plot the top 10 products for low-value customers
+ggplot(top_10_low_value_products, aes(x = reorder(Description, TotalQuantity), y = TotalQuantity)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  coord_flip() +  # Flip the coordinates for better readability +
+  geom_text(aes(label = scales::comma(TotalQuantity)), vjust = -0.3, color = "black")+
+  labs(title = "Top 10 Products for Low-Value Customers",
+       x = "Country",
+       y = "Number of Low-Value Customers") +
+  theme_minimal()
+
+```
+
+4. Analyze Purchase Trends Over Time
+- Convert InvoiceDate to a proper date format.
+- Extract Year-Month from purchase dates.
+- Aggregate total purchase value per month by CLV segment.
+- Visualize purchase trends over time using a line chart.
+
+```{r echo=FALSE}
+#typeof(merged_data$InvoiceDate)
+
+# Ensure InvoiceDate is in POSIXct format
+merged_data$InvoiceDate <- as.POSIXct(merged_data$InvoiceDate, format = "%Y-%m-%d %H:%M:%S")
+
+# Extract the month in the correct format (Year-Month)
+merged_data$Month <- format(merged_data$InvoiceDate, "%Y-%m")
+
+# Summarize purchases by month and customer segment
+purchase_periods <- merged_data %>%
+  group_by(CLV_Segment, Month) %>%
+  summarise(TotalPurchaseValue = sum(Quantity * UnitPrice), .groups = 'drop') %>%
+  arrange(CLV_Segment, Month)
+
+purchase_periods$Month <- as.Date(paste0(purchase_periods$Month, "-01"), format = "%Y-%m-%d")
+
+# Plot the trends over time
+
+ggplot(purchase_periods, aes(x = Month, y = TotalPurchaseValue, color = CLV_Segment)) +
+  geom_line() +
+  labs(title = "Purchase Trends by Customer Segment", x = "Month", y = "Total Purchase Value") +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "1 month") +  # Format the x-axis for better readability
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels for better visibility
+```
+
+## Association Rules (Apriori or FP-Growth)
+
+The approach involves preparing transaction data by grouping product descriptions for each invoice and filtering transactions with more than three items. The items are then split and converted into a "transactions" format for Association Rule Mining. The Apriori algorithm is applied with specified thresholds for support and confidence to uncover frequent itemsets. The left-hand side (lhs) and right-hand side (rhs) of the rules are extracted, representing commonly co-occurring products. The frequency of products is calculated and sorted to identify popular items bought together. Visualizations are created to explore these relationships, providing insights for marketing or sales strategies based on product associations.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# Load necessary libraries for Association Rule Mining
+library(arules)
+
+# Prepare the data for the association rule analysis
+# Create transactions using InvoiceNo and StockCode
+transactions <- df %>%
+  select(InvoiceNo, Description) %>%
+  distinct() %>%
+  group_by(InvoiceNo) %>%
+  summarise(items = paste(Description, collapse = ","))
+
+transactions <- transactions[nchar(transactions$items) > 3, ]
+
+# Split the items in each transaction (assuming items are separated by commas)
+item_lists <- strsplit(transactions$items, ",")
+
+# Convert to a transaction format
+trans <- as(item_lists, "transactions")
+
+# Apply the Apriori algorithm to find frequent itemsets
+rules <- apriori(trans, parameter = list(support = 0.01, confidence = 0.5))
+
+```
+```{r}
+# View the rules
+inspect(head(rules))
+```
+
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Extract lhs and rhs from the rules
+lhs_items <- labels(lhs(rules))
+rhs_items <- labels(rhs(rules))
+
+# Combine lhs and rhs into one vector of items
+all_items <- c(lhs_items, rhs_items)
+
+# Count the frequency of each item
+product_freq <- table(all_items)
+
+# Sort the products by frequency
+sorted_product_freq <- sort(product_freq, decreasing = TRUE)
+
+# Convert to a data frame for better viewing
+freq_df <- as.data.frame(sorted_product_freq)
+
+# Rename columns for clarity
+colnames(freq_df) <- c("Product", "Frequency")
+
+# View the top 10 most frequent products bought together
+head(freq_df, 10)
+```
+
+
+```{r message=FALSE, warning=FALSE}
+library(arulesViz)
+
+plot(rules, engine = "plotly")
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+
+subrules <- head(rules, n = 100, by = "confidence")
+
+```
+
+```{r message=FALSE, warning=FALSE}
+plot(subrules, method = "graph",  engine = "htmlwidget")
+```
+
+
+
+
+
+
