@@ -2,7 +2,7 @@
 
 [Project-url](https://swintabel.github.io/Statistical-Analysis-of-Sales/sales.html)
 
-[R Shiny App](http://swintabel.shinyapps.io/Sales)
+[R Shiny Dashboard](http://swintabel.shinyapps.io/Sales)
 
 ### Project Summary
 
