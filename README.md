@@ -2,6 +2,8 @@
 
 [Project-url](https://swintabel.github.io/Statistical-Analysis-of-Sales/sales.html)
 
+[R Shiny App](http://swintabel.shinyapps.io/Sales)
+
 ### Project Summary
 
 This project focuses on analyzing **customer purchasing behavior** using **Association Rule Mining** and RFM (Recency, Frequency, and Monetary) analysis. The goal was to identify high-value and low-value customer segments, uncover frequent itemsets, and gain insights into the most popular products purchased by each segment. The analysis also included visualizations of trends, such as dominant countries for customer segments and the top products bought by high and low-value customers.
