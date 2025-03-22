@@ -5,6 +5,9 @@ library(arulesViz)
 library(DT)
 library(plotly)
 library(visNetwork)
+library(dplyr)
+library(scales)
+
 
 
 ui <- dashboardPage(
@@ -43,6 +46,8 @@ ui <- dashboardPage(
 
 server <- function(input, output) {
   
+  top_10_high_value_countries <- readRDS("www/top_10_high_value_countries.rds")
+  
   # RFM Plot
   output$highrfm_plot <- renderPlot({
     # Plot the top 10 dominant countries for high-value customers
@@ -57,6 +62,7 @@ server <- function(input, output) {
   })
   
   # RFM Plot
+  top_10_high_value_products <- readRDS("www/top_10_high_value_products.rds")
   output$highrfmCust_plot <- renderPlot({
     # Plot the top 10 Products for low-value customers
     ggplot(top_10_high_value_products, aes(x = reorder(Description, TotalQuantity), y = TotalQuantity)) +
@@ -70,6 +76,7 @@ server <- function(input, output) {
   })
   
   # RFM Plot
+  top_10_low_value_countries <- readRDS("www/top_10_low_value_countries.rds")
   output$lowrfm_plot <- renderPlot({
     # Plot the top 10 dominant countries for low-value customers
     ggplot(top_10_low_value_countries, aes(x = reorder(Country, CustomerCount), y = CustomerCount)) +
@@ -84,6 +91,7 @@ server <- function(input, output) {
   
   
   # RFM Plot
+  top_10_low_value_products <- readRDS("www/top_10_low_value_products.rds")
   output$lowrfmCust_plot <- renderPlot({
     # Plot the top 10 products for low-value customers
     ggplot(top_10_low_value_products, aes(x = reorder(Description, TotalQuantity), y = TotalQuantity)) +
@@ -97,6 +105,7 @@ server <- function(input, output) {
   })
   
   # RFM Plot
+  purchase_periods <- readRDS("www/purchase_periods.rds")
   output$timetrend <- renderPlotly({
     ggplot(purchase_periods, aes(x = Month, y = TotalPurchaseValue, color = CLV_Segment)) +
       geom_line() +
@@ -105,6 +114,7 @@ server <- function(input, output) {
   })
   
   # Cost Group
+  top_10_per_cluster <- readRDS("www/top_10_per_cluster.rds")
   output$product_plot <- renderPlot({
     ggplot(top_10_per_cluster, aes(x = TotalQuantity, y = reorder(Description, TotalQuantity), fill = Cluster)) +
       geom_col() +  # Use stat="identity" to plot actual values
@@ -119,6 +129,7 @@ server <- function(input, output) {
   })
   
   # Cost Group
+  df_cluster <- readRDS("www/df_cluster.rds")
   output$clusters <- renderPlot({
     #clusters plot
     ggplot(df_cluster, aes(x = AvgPrice, y = Cluster, color = Cluster)) +
@@ -129,6 +140,7 @@ server <- function(input, output) {
   })
   
   # Cost Group
+  df <- readRDS("www/df.rds")
   output$clusterBox <- renderPlot({
     ggplot(df, aes(x = Cluster, y = Quantity)) +
       geom_boxplot() +
@@ -141,6 +153,7 @@ server <- function(input, output) {
   
   
   # Frequent Itemsets Plot
+  subrules <- readRDS("www/subrules.rds")
   output$freq_plot <- renderVisNetwork({
     # Plot the top 100 rules based on 'lift' or any other metric
     plot(subrules, method = "graph", engine = "htmlwidget", control = list(max = 100))
